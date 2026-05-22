@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 
 from .pipeline import RAGPipeline, RAGConfig, DB_DIR_DEFAULT, DOCS_DIR_DEFAULT
 from . import logger as log
+from .evaluation import TestSuite, RAGEvaluator, EvalReporter
 
 load_dotenv()
 
@@ -82,6 +83,94 @@ def cmd_interactive(args):
             print(f"\n来源: {', '.join(result['sources'])}")
 
 
+def cmd_evaluate(args):
+    """运行 RAG 效果评估"""
+    log.setup(verbose=args.verbose)
+
+    # 加载测试用例
+    if args.categories:
+        suite = TestSuite(name="custom")
+        all_cases = TestSuite.load_default()
+        for cat in args.categories.split(","):
+            cat = cat.strip()
+            for tc in all_cases.get_by_category(cat):
+                suite.add_case(tc)
+        if len(suite) == 0:
+            print(f"未找到匹配类别的测试用例: {args.categories}")
+            print(f"可用类别: {', '.join(all_cases.categories)}")
+            sys.exit(1)
+    else:
+        suite = TestSuite.load_default()
+
+    # 初始化管线
+    config = RAGConfig(
+        top_k=args.top_k,
+        collection_name=args.collection,
+        retrieval_mode=args.mode,
+        enable_rerank=not args.no_rerank,
+        rerank_top_k=args.rerank_top_k,
+        enable_query_rewrite=not args.no_rewrite,
+    )
+    pipeline = RAGPipeline(db_dir=args.db_dir, config=config)
+
+    # 确定检索模式
+    if args.eval_modes:
+        modes = [m.strip() for m in args.eval_modes.split(",")]
+    else:
+        modes = ["vector", "bm25", "hybrid"]
+
+    # 确定 K 值
+    if args.k_values:
+        k_values = [int(k.strip()) for k in args.k_values.split(",")]
+    else:
+        k_values = [1, 3, 5, 8]
+
+    # 运行评估
+    evaluator = RAGEvaluator(pipeline, suite)
+
+    run_retrieval = not args.generation_only
+    run_generation = not args.retrieval_only
+
+    retrieval_summary = {}
+    generation_summary = {}
+    per_category = {}
+
+    if run_retrieval:
+        retrieval_summary = evaluator.evaluate_retrieval(
+            modes=modes, k_values=k_values, top_k=args.eval_top_k, verbose=not args.quiet
+        )
+        if args.by_category:
+            per_category = evaluator.evaluate_by_category(
+                modes=modes, k_values=k_values, top_k=args.eval_top_k, verbose=not args.quiet
+            )
+
+    if run_generation:
+        generation_summary = evaluator.evaluate_generation(verbose=not args.quiet)
+
+    # 保存逐用例详情（默认按时间戳自动命名）
+    if not args.no_save_details:
+        details_path = args.save_details
+        if not details_path:
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            details_path = f"benchmarks/details_{timestamp}.json"
+        evaluator.save_details(details_path)
+
+    # 报告
+    from .evaluation.runner import EvalResult
+    result = EvalResult(
+        test_suite_name=suite.name,
+        retrieval=retrieval_summary,
+        generation=generation_summary,
+        per_category=per_category,
+    )
+
+    EvalReporter.print_full_report(result, show_per_category=args.by_category)
+
+    if args.output:
+        EvalReporter.export_json(result, args.output)
+
+
 def main():
     parser = argparse.ArgumentParser(description="RAG Agent - 基于检索增强生成的问答系统")
     sub = parser.add_subparsers(dest="command", help="子命令")
@@ -111,6 +200,30 @@ def main():
     _add_verbose_arg(p_chat)
     _add_retrieval_args(p_chat)
 
+    # evaluate
+    p_eval = sub.add_parser("evaluate", help="RAG 效果评估")
+    p_eval.add_argument("--db-dir", default=DB_DIR_DEFAULT)
+    p_eval.add_argument("--collection", default="rag_agent")
+    p_eval.add_argument("--categories", default=None,
+                        help="按类别筛选测试用例，逗号分隔 (如: definition,comparison)")
+    p_eval.add_argument("--retrieval-only", action="store_true", help="仅运行检索评估")
+    p_eval.add_argument("--generation-only", action="store_true", help="仅运行生成评估")
+    p_eval.add_argument("--eval-modes", default=None,
+                        help="检索模式，逗号分隔 (如: vector,bm25,hybrid)，默认全部")
+    p_eval.add_argument("--eval-top-k", type=int, default=20,
+                        help="评估时每种模式检索的文档数 (默认20)")
+    p_eval.add_argument("--k-values", default=None,
+                        help="Recall@K 中的 K 值列表，逗号分隔 (如: 1,3,5,8)")
+    p_eval.add_argument("--by-category", action="store_true", help="按类别拆分指标")
+    p_eval.add_argument("--output", default=None, help="导出 JSON 报告路径")
+    p_eval.add_argument("--save-details", default=None,
+                        help="保存逐用例评估详情到 JSON 文件 (默认按时间戳自动命名)")
+    p_eval.add_argument("--no-save-details", action="store_true",
+                        help="不保存逐用例评估详情")
+    p_eval.add_argument("--quiet", "-q", action="store_true", help="静默模式，不显示进度条")
+    _add_verbose_arg(p_eval)
+    _add_retrieval_args(p_eval)
+
     args = parser.parse_args()
 
     if args.command == "ingest":
@@ -119,6 +232,8 @@ def main():
         cmd_query(args)
     elif args.command == "chat":
         cmd_interactive(args)
+    elif args.command == "evaluate":
+        cmd_evaluate(args)
     else:
         parser.print_help()
 
