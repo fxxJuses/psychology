@@ -1,0 +1,31 @@
+{
+  "test_suite": "default",
+  "retrieval": {
+    "vector": {
+      "recall@1": 0.4125, "precision@1": 0.2000, "ndcg@1": 0.2000, "hit@1": 0.2000,
+      "recall@3": 0.4723, "precision@3": 0.3111, "ndcg@3": 0.2864, "hit@3": 0.4667,
+      "recall@5": 0.5138, "precision@5": 0.2933, "ndcg@5": 0.2819, "hit@5": 0.4667,
+      "recall@8": 0.5675, "precision@8": 0.2667, "ndcg@8": 0.2667, "hit@8": 0.4667,
+      "mrr": 0.3296, "map": 0.2320
+    },
+    "bm25": {
+      "recall@1": 0.4199, "precision@1": 0.2667, "ndcg@1": 0.2667, "hit@1": 0.2667,
+      "recall@3": 0.4588, "precision@3": 0.2667, "ndcg@3": 0.2667, "hit@3": 0.4667,
+      "recall@5": 0.4871, "precision@5": 0.2267, "ndcg@5": 0.2414, "hit@5": 0.4667,
+      "recall@8": 0.6195, "precision@8": 0.2167, "ndcg@8": 0.2574, "hit@8": 0.6000,
+      "mrr": 0.3651, "map": 0.1630
+    },
+    "hybrid": {
+      "recall@1": 0.4227, "precision@1": 0.2667, "ndcg@1": 0.2667, "hit@1": 0.2667,
+      "recall@3": 0.5362, "precision@3": 0.3111, "ndcg@3": 0.3285, "hit@3": 0.5333,
+      "recall@5": 0.5640, "precision@5": 0.2667, "ndcg@5": 0.3045, "hit@5": 0.5333,
+      "recall@8": 0.6252, "precision@8": 0.2667, "ndcg@8": 0.3064, "hit@8": 0.5333,
+      "mrr": 0.3829, "map": 0.2379
+    }
+  },
+  "generation": {
+    "faithfulness": 1.0000,
+    "answer_relevance": 0.5267
+  },
+  "per_category": {}
+}
