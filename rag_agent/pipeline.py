@@ -2,7 +2,7 @@ import os
 import pickle
 from dataclasses import dataclass, field
 
-from .document import load_documents, chunk_documents, ChunkingConfig
+from .document import load_documents, chunk_documents, save_chunks_to_json, ChunkingConfig
 from .embeddings import create_embeddings
 from .vectorstore import create_vectorstore, add_documents, load_vectorstore, get_all_documents
 from .retriever import (
@@ -102,6 +102,9 @@ class RAGPipeline:
             strategy=self.config.chunk_strategy,
         )
         chunks = chunk_documents(docs, chunk_cfg)
+
+        # 本地化存储 chunk 结果，方便调优
+        save_chunks_to_json(chunks, config=chunk_cfg)
 
         embeddings = create_embeddings()
         vs = create_vectorstore(

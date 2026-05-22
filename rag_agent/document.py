@@ -1,11 +1,14 @@
 import os
+import sys
+import json
+from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from typing import List
 
 from langchain_community.document_loaders import (
     DirectoryLoader,
     TextLoader,
-    PyMuPDFLoader,
 )
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
@@ -15,6 +18,20 @@ from . import logger
 import fitz
 from pdf2image import convert_from_path
 import pytesseract
+
+
+@contextmanager
+def _suppress_stderr():
+    """Temporarily suppress stderr to silence MuPDF warnings."""
+    old_stderr = os.dup(2)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, 2)
+    os.close(devnull)
+    try:
+        yield
+    finally:
+        os.dup2(old_stderr, 2)
+        os.close(old_stderr)
 
 
 @dataclass
@@ -128,14 +145,43 @@ def _recursive_chunk(
 
 
 def _pdf_has_text(filepath: str) -> bool:
-    doc = fitz.open(filepath)
-    for i in range(min(10, doc.page_count)):
-        text = doc[i].get_text().strip()
-        if len(text) > 20:
+    with _suppress_stderr():
+        doc = fitz.open(filepath)
+        try:
+            for i in range(min(10, doc.page_count)):
+                text = doc[i].get_text().strip()
+                if len(text) > 20:
+                    return True
+            return False
+        finally:
             doc.close()
-            return True
-    doc.close()
-    return False
+
+
+def _load_pdf_with_fitz(filepath: str) -> List[Document]:
+    """Load PDF using fitz directly, suppressing MuPDF warnings."""
+    docs: List[Document] = []
+    filename = os.path.basename(filepath)
+
+    with _suppress_stderr():
+        doc = fitz.open(filepath)
+        try:
+            total = doc.page_count
+            skipped = 0
+            for i in range(total):
+                text = doc[i].get_text().strip()
+                if text and len(text) > 10:
+                    docs.append(Document(
+                        page_content=text,
+                        metadata={"source": filepath, "page": i + 1},
+                    ))
+                else:
+                    skipped += 1
+        finally:
+            doc.close()
+
+    print(f"[Document] 加载 {filename}: {len(docs)} 页"
+          f"{f' (跳过 {skipped} 个空白页)' if skipped else ''}")
+    return docs
 
 
 def _load_pdf_with_ocr(filepath: str) -> List[Document]:
@@ -215,14 +261,8 @@ def load_documents(source_dir: str) -> List[Document]:
 
     for pdf_path in pdf_files:
         if _pdf_has_text(pdf_path):
-            loader = PyMuPDFLoader(pdf_path)
-            raw_docs = loader.load()
-            valid = [d for d in raw_docs if d.page_content and d.page_content.strip()]
-            skipped = len(raw_docs) - len(valid)
-            docs.extend(valid)
-            print(f"[Document] 加载 {os.path.basename(pdf_path)}: "
-                  f"{len(valid)} 页"
-                  f"{f' (跳过 {skipped} 个空白页)' if skipped else ''}")
+            pdf_docs = _load_pdf_with_fitz(pdf_path)
+            docs.extend(pdf_docs)
         else:
             ocr_docs = _load_pdf_with_ocr(pdf_path)
             docs.extend(ocr_docs)
@@ -263,3 +303,110 @@ def chunk_documents(
             logger.keyval("...", f"还有 {len(result) - 10} 个 chunks 未显示")
 
     return result
+
+
+CHUNKS_OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "chunks")
+
+
+def _safe_stem(source_name: str) -> str:
+    """Return a filesystem-safe stem from a source filename."""
+    # remove extension, replace unsafe chars
+    stem = os.path.splitext(source_name)[0]
+    # replace characters that are problematic in filenames
+    for ch in r'\/:*?"<>|':
+        stem = stem.replace(ch, "_")
+    return stem
+
+
+def save_chunks_to_json(
+    chunks: List[Document],
+    output_dir: str | None = None,
+    config: ChunkingConfig | None = None,
+) -> str:
+    """Save chunks to per-source JSON files for inspection and tuning.
+
+    Each PDF gets its own JSON file under output_dir. A _manifest.json
+    summarises all sources with stats.
+
+    Returns the output directory path.
+    """
+    out_dir = output_dir or CHUNKS_OUTPUT_DIR
+    os.makedirs(out_dir, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # group chunks by source basename
+    groups: dict[str, List[dict]] = {}
+    stats: dict[str, dict] = {}
+
+    for i, chunk in enumerate(chunks):
+        source = chunk.metadata.get("source", "unknown")
+        source_name = os.path.basename(source)
+        content = chunk.page_content
+
+        rec = {
+            "chunk_id": i,
+            "page": chunk.metadata.get("page"),
+            "chunk_strategy": chunk.metadata.get("chunk_strategy", ""),
+            "char_count": len(content),
+            "content": content,
+        }
+
+        groups.setdefault(source_name, []).append(rec)
+
+        if source_name not in stats:
+            stats[source_name] = {"chunk_count": 0, "total_chars": 0, "min_chars": None, "max_chars": 0}
+        s = stats[source_name]
+        s["chunk_count"] += 1
+        s["total_chars"] += len(content)
+        if s["min_chars"] is None or len(content) < s["min_chars"]:
+            s["min_chars"] = len(content)
+        if len(content) > s["max_chars"]:
+            s["max_chars"] = len(content)
+
+    # write per-source JSON files
+    saved_files: list[str] = []
+    for source_name, records in groups.items():
+        stem = _safe_stem(source_name)
+        filename = f"{stem}_{timestamp}.json"
+        filepath = os.path.join(out_dir, filename)
+
+        payload = {
+            "source": source_name,
+            "generated_at": timestamp,
+            "chunk_size": config.chunk_size if config else None,
+            "chunk_overlap": config.chunk_overlap if config else None,
+            "chunk_strategy": config.strategy if config else None,
+            "chunk_count": len(records),
+            "chunks": records,
+        }
+
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        saved_files.append(filepath)
+
+    # compute averages for stats
+    for s in stats.values():
+        s["avg_chars"] = round(s["total_chars"] / s["chunk_count"], 1)
+        del s["total_chars"]
+
+    # write manifest
+    manifest = {
+        "generated_at": timestamp,
+        "total_chunks": len(chunks),
+        "chunk_size": config.chunk_size if config else None,
+        "chunk_overlap": config.chunk_overlap if config else None,
+        "chunk_strategy": config.strategy if config else None,
+        "per_source_stats": stats,
+        "files": [os.path.basename(f) for f in saved_files],
+    }
+    manifest_path = os.path.join(out_dir, "_manifest.json")
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, ensure_ascii=False, indent=2)
+
+    logger.info(f"[Document] 切分结果已保存到: {out_dir}")
+    print(f"[Document] 切分结果已保存到: {out_dir}")
+    for fp in saved_files:
+        print(f"  - {os.path.basename(fp)}")
+    print(f"  - _manifest.json")
+    return out_dir
