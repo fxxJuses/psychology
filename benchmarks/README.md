@@ -16,7 +16,8 @@ benchmarks/
 
 | 日期 | 描述 | 关键指标 |
 |------|------|----------|
-| [2026-05-22](./2026-05-22_baseline/ARCHITECTURE.md) | 首次基线评估 | hybrid Recall@5=0.564, MRR=0.383, Hit@5=0.533 |
+| [2026-05-23](./2026-05-23_hierarchical/README.md) | 三层层级索引 | vector MRR=0.494 (+50%), Answer Relevance=0.573 (+9%) |
+| [2026-05-22](./2026-05-22_baseline/ARCHITECTURE.md) | 首次基线评估 (flat chunks) | hybrid Recall@5=0.564, MRR=0.383, Hit@5=0.533 |
 
 ## 如何使用
 
