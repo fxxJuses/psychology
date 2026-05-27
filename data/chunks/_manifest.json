@@ -1,32 +1,32 @@
 {
-  "generated_at": "20260527_165012",
-  "total_chunks": 2017,
-  "chunk_size": 256,
-  "chunk_overlap": 25,
+  "generated_at": "20260527_233322",
+  "total_chunks": 784,
+  "chunk_size": 1024,
+  "chunk_overlap": 80,
   "chunk_strategy": "sentence",
   "per_source_stats": {
     "焦虑心理学.pdf": {
-      "chunk_count": 470,
+      "chunk_count": 232,
       "min_chars": 20,
-      "max_chars": 267,
-      "avg_chars": 207.6
+      "max_chars": 613,
+      "avg_chars": 368.8
     },
     "乌合之众：大众心理研究.pdf": {
-      "chunk_count": 688,
+      "chunk_count": 234,
       "min_chars": 21,
-      "max_chars": 266,
-      "avg_chars": 224.9
+      "max_chars": 737,
+      "avg_chars": 557.6
     },
     "人人都该懂的心理学.pdf": {
-      "chunk_count": 859,
+      "chunk_count": 318,
       "min_chars": 37,
-      "max_chars": 267,
-      "avg_chars": 223.1
+      "max_chars": 912,
+      "avg_chars": 513.0
     }
   },
   "files": [
-    "焦虑心理学_20260527_165012.json",
-    "乌合之众：大众心理研究_20260527_165012.json",
-    "人人都该懂的心理学_20260527_165012.json"
+    "焦虑心理学_20260527_233322.json",
+    "乌合之众：大众心理研究_20260527_233322.json",
+    "人人都该懂的心理学_20260527_233322.json"
   ]
 }

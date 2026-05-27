@@ -21,6 +21,7 @@ def _add_retrieval_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--no-rerank", action="store_true", help="禁用 LLM 精排")
     parser.add_argument("--rerank-top-k", type=int, default=4, help="精排后保留数量 (默认4)")
     parser.add_argument("--no-rewrite", action="store_true", help="禁用查询改写")
+    parser.add_argument("--no-hyde", action="store_true", help="禁用 HyDE 假设文档检索")
 
 
 def cmd_ingest(args):
@@ -110,6 +111,7 @@ def cmd_evaluate(args):
         enable_rerank=not args.no_rerank,
         rerank_top_k=args.rerank_top_k,
         enable_query_rewrite=not args.no_rewrite,
+        enable_hyde=not args.no_hyde if hasattr(args, 'no_hyde') else True,
     )
     pipeline = RAGPipeline(db_dir=args.db_dir, config=config)
 
