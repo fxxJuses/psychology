@@ -26,13 +26,14 @@ class RAGConfig:
     chunk_size: int = 500
     chunk_overlap: int = 80
     chunk_strategy: str = "sentence"
-    top_k: int = 8
+    top_k: int = 30
     collection_name: str = "rag_agent"
 
     retrieval_mode: str = "hybrid"
     enable_rerank: bool = True
-    rerank_top_k: int = 4
+    rerank_top_k: int = 8
     enable_query_rewrite: bool = True
+    enable_hyde: bool = True           # HyDE: 生成假设文档后再检索
 
 
 class RAGPipeline:
@@ -108,7 +109,7 @@ class RAGPipeline:
         )
         chunks = chunk_documents(docs, chunk_cfg)
 
-        # 本地化存储 chunk 结果，方便调优
+        # 本地化存储父 chunk 结果，方便调优
         save_chunks_to_json(chunks, config=chunk_cfg)
 
         # ========== 层级索引构建 ==========
@@ -212,6 +213,7 @@ class RAGPipeline:
                 enable_rerank=self.config.enable_rerank,
                 rerank_top_k=self.config.rerank_top_k,
                 enable_query_rewrite=self.config.enable_query_rewrite,
+                enable_hyde=self.config.enable_hyde,
             )
             docs = retrieve(
                 query=question,

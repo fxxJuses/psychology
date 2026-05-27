@@ -391,6 +391,8 @@ def is_macro_query(question: str) -> bool:
     return any(kw in question for kw in MACRO_KEYWORDS)
 
 
+# ====================== 检索辅助 ======================
+
 def flatten_l1_l2_texts(
     hierarchy: HierarchyIndex, source_filter: str | None = None
 ) -> List[str]:
