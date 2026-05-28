@@ -141,7 +141,8 @@ class RAGEvaluator:
 
         # Apply reranker if requested (and mode implies it)
         if enable_rerank or mode == "hybrid_reranked":
-            reranked = _llm_rerank(self.llm, question, raw, top_k=top_k)
+            rerank_k = self.pipeline.config.rerank_top_k
+            reranked = _llm_rerank(self.llm, question, raw, top_k=rerank_k)
             # Return as (doc, 0.0) tuples to maintain interface
             return [(doc, 0.0) for doc in reranked]
 
