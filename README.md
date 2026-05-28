@@ -1,41 +1,49 @@
-# 🧠 Psychology RAG —— 心理学文档智能问答系统
+# Psychology RAG — 心理学文档智能问答系统
 
-基于 **RAG (Retrieval-Augmented Generation)** 的心理学文档问答系统，支持文档摄入、多模式检索、LLM 生成回答，以及完整的检索+生成效果评估。
+基于 **RAG (Retrieval-Augmented Generation)** 的心理学文档问答系统，支持段落级切分、层级索引、混合检索 + LLM 精排，以及完整的检索+生成效果评估。
 
-## ✨ 特性
+## 特性
 
-- 📄 **文档处理**：支持 PDF（数字版/扫描版 OCR）与 TXT 文档，句级感知分块
-- 🔍 **多模式检索**：向量语义搜索 · BM25 关键词检索 · Hybrid 混合检索（RRF 融合）
-- 🤖 **LLM 生成**：基于 DeepSeek-V4-Flash，严格依据检索上下文作答
-- 🔄 **查询优化**：LLM 查询改写 + LLM 精排重排序
-- 📊 **完整评估体系**：6 项检索指标 + 2 项生成质量指标（LLM-as-Judge）
-- 🧪 **15 条测试用例**：覆盖事实查询、定义、对比、多跳推理、总结、负样本
-- 📈 **基线归档**：评估结果自动归档，支持版本对比
+- **段落级切分**: OCR 文本重建为语义完整段落 (~1200字)，携带章节/前后链式 metadata
+- **v4 Embedding**: DashScope text-embedding-v4，启用 text_type + instruct 参数
+- **层级索引**: 文档级 → 章节级 → 段落级三层索引，宏观/微观问题自动路由
+- **混合检索 + Rerank**: Vector + BM25 → RRF 融合 → LLM 精选，支持 HyDE 和查询改写
+- **严格生成**: 区分核心/补充文档，禁止编造引用
+- **完整评估**: 6 项检索指标 + 2 项生成质量指标 (LLM-as-Judge)，15 条测试用例
 
-## 🏗️ 架构
+## 架构
 
 ```
-Raw Documents (PDF/TXT)
-    ↓ [MuPDF / pytesseract OCR]
-Text Extraction
-    ↓ [Sentence-Aware Chunking]
-Chunks (500 chars, 80 overlap)
-    ↓ [DashScope text-embedding-v3]
-Embeddings (1024-dim)
-    ↓
-Chroma Vector Store + BM25 Index
+Raw Documents (PDF)
+    ↓ [MuPDF + OCR text extraction]
+    ↓ [Paragraph Chunker: OCR清洗 → 章节检测 → 段落重建]
+Paragraph Chunks (~1200 chars, with chapter/prev/next metadata)
+    ↓ [text-embedding-v4 (text_type=document, dim=1024)]
+    ↓ + [Hierarchy: L1 全书摘要 → L2 章节摘要 → L3 段落]
+ChromaDB (320 records) + BM25 Index
     ↓
 User Query
-    ↓ [Query Rewriting (LLM)]
-    ↓ [Vector + BM25 → RRF Fusion]
-Candidate Chunks
-    ↓ [LLM Reranking → Top-K]
-Context
-    ↓ [DeepSeek-V4-Flash]
+    ↓ [HyDE / Query Rewrite]
+    ↓ [is_macro_query? → L1+L2摘要优先 / 否则 ↓]
+    ↓ [Vector(top-30) + BM25(top-30) → RRF Fusion]
+    ↓ [LLM Rerank → Top-8]
+    ↓ [Context Expansion (optional)]
+Context (core docs + supplementary)
+    ↓ [DeepSeek-V4-Flash: strict grounded generation]
 Answer + Sources
 ```
 
-## 📁 目录结构
+## 当前最优指标 (2026-05-28)
+
+| 指标 | hybrid_reranked | 历史最优 |
+|------|-----------------|---------|
+| Recall@5 | **0.709** | 0.669 |
+| MRR | **0.733** | 0.612 |
+| Hit@1 | **0.733** | 0.533 |
+| Faithfulness | 0.873 | 0.933 |
+| Answer Relevance | **0.953** | 0.933 |
+
+## 目录结构
 
 ```
 psychology/
@@ -43,168 +51,88 @@ psychology/
 ├── rag_agent/                  # 核心模块
 │   ├── cli.py                  # 命令行接口
 │   ├── pipeline.py             # RAG 流水线与配置
-│   ├── document.py             # 文档加载与分块
-│   ├── embeddings.py           # DashScope 嵌入封装
+│   ├── document.py             # 文档加载与切分 (sentence/recursive)
+│   ├── paragraph_chunker.py    # 段落级切分 (章节检测+链式metadata)
+│   ├── embeddings.py           # DashScope text-embedding-v4
 │   ├── vectorstore.py          # Chroma 向量存储
-│   ├── retriever.py            # 多模式检索引擎
-│   ├── generator.py            # LLM 答案生成
+│   ├── retriever.py            # 混合检索 + RRF + Rerank + 上下文扩展
+│   ├── generator.py            # LLM 答案生成 (严格grounded)
+│   ├── hierarchy.py            # 三层层级索引
 │   ├── logger.py               # 结构化日志
 │   └── evaluation/             # 评估子系统
-│       ├── test_cases.py       # 测试用例定义
+│       ├── test_cases.py       # 15条测试用例 (6类)
 │       ├── metrics.py          # 检索指标计算
-│       ├── generation_eval.py  # 生成质量评估
-│       ├── runner.py           # 评估执行器
+│       ├── generation_eval.py  # 生成质量评估 (LLM-as-Judge)
+│       ├── runner.py           # 评估执行器 (含reranker评估)
 │       └── reporter.py         # 结果格式化与导出
-├── tests/                      # 单元测试（103 个）
+├── tests/                      # 单元测试
 ├── data/
-│   ├── documents/              # 源文档
-│   ├── chunks/                 # 分块缓存
+│   ├── documents/              # 源文档 (PDF)
+│   ├── chunks/                 # 切分产物 + manifest
 │   └── chroma_db/              # Chroma 持久化
-├── docs/                       # 文档与问题记录
+├── docs/                       # 架构文档
 └── benchmarks/                 # 评估基线归档
 ```
 
-## 🚀 快速开始
+## 快速开始
 
 ### 环境要求
 
 - Python 3.10+
-- [DashScope API Key](https://dashscope.aliyun.com/)（用于 Embedding 和 LLM）
+- DashScope API Key
 
 ### 安装
 
 ```bash
-git clone <repo-url>
-cd psychology
-
-# 创建虚拟环境
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-
-# 安装依赖
 pip install -r requirements.txt
-```
-
-### 配置 API Key
-
-```bash
 export DASHSCOPE_API_KEY="your-api-key"
 ```
 
-### 1. 摄入文档
+### 使用
 
 ```bash
-# 将 PDF/TXT 文档放入 data/documents/，然后运行：
-python main.py ingest \
-  --docs-dir data/documents \
-  --db-dir data/chroma_db \
-  --chunk-size 500 \
-  --chunk-overlap 80 \
-  --collection rag_agent
+# 1. 摄入文档 (默认: 段落切分 1200字)
+python main.py ingest
+
+# 2. 查询 (默认: hybrid + rerank + HyDE)
+python main.py query "什么是灾难化思维？"
+
+# 3. 交互对话
+python main.py chat --show-sources
+
+# 4. 评估
+python main.py evaluate --eval-modes hybrid,hybrid_reranked
 ```
 
-### 2. 查询
-
-```bash
-# 单次查询
-python main.py query "什么是广泛性焦虑障碍(GAD)？" --mode hybrid
-
-# 交互式对话
-python main.py chat --show-sources --mode hybrid
-```
-
-### 3. 运行评估
-
-```bash
-python main.py evaluate \
-  --eval-modes vector,bm25,hybrid \
-  --k-values 1,3,5,8 \
-  --by-category \
-  --output results.json
-```
-
-### 4. 运行测试
-
-```bash
-pytest tests/ -v
-```
-
-## 📖 使用指南
-
-### CLI 命令
-
-| 命令 | 说明 |
-|------|------|
-| `python main.py ingest` | 摄入文档，构建向量索引 + BM25 索引 |
-| `python main.py query "<问题>"` | 单次问答 |
-| `python main.py chat` | 交互式对话模式 |
-| `python main.py evaluate` | 运行评估套件 |
-
-### 检索参数
+### CLI 默认参数 (最优配置)
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `--mode` | `hybrid` | 检索模式：`vector` / `bm25` / `hybrid` |
-| `--top-k` | `8` | 检索返回的 chunk 数量 |
-| `--rerank-top-k` | `4` | LLM 精排后保留数量 |
-| `--no-rerank` | — | 禁用 LLM 精排 |
-| `--no-rewrite` | — | 禁用查询改写 |
+| `--mode` | `hybrid` | 混合检索 (Vector + BM25) |
+| `--top-k` | `30` | 候选检索数量 |
+| `--rerank-top-k` | `8` | LLM 精选保留数量 |
+| `--chunk-size` | `1200` | 段落目标大小 |
+| `--chunk-strategy` | `paragraph` | 段落级切分 |
 
-### 评估参数
+## 语料库
 
-| 参数 | 说明 |
-|------|------|
-| `--eval-modes` | 要对比的检索模式（逗号分隔） |
-| `--k-values` | 评估的 K 值列表 |
-| `--categories` | 按类别筛选测试用例 |
-| `--by-category` | 输出按类别拆分的指标 |
-| `--retrieval-only` | 仅评估检索指标 |
-| `--generation-only` | 仅评估生成质量 |
-| `--output` | JSON 结果输出路径 |
-| `--save-details` | 逐用例详情保存路径 |
+| 文档 | 段落数 | 平均字数 |
+|------|--------|---------|
+| 焦虑心理学 | 68 | 1212 |
+| 乌合之众：大众心理研究 | 102 | 1217 |
+| 人人都该懂的心理学 | 126 | 1248 |
+| **合计** | **296** | **1227** |
 
-### 评估指标
-
-**检索指标：** Recall@K · Precision@K · MRR · NDCG@K · Hit Rate · MAP
-
-**生成指标：** Faithfulness（忠实度） · Answer Relevance（回答相关性）
-
-## 📊 基线结果（2026-05-22）
-
-| 指标 | vector | bm25 | **hybrid** |
-|------|--------|------|-------------|
-| Recall@5 | 0.514 | 0.487 | **0.564** |
-| MRR | 0.330 | 0.365 | **0.383** |
-| Hit@5 | 0.467 | 0.467 | **0.533** |
-| Faithfulness | — | — | **1.000** |
-| Relevance | — | — | **0.527** |
-
-> Hybrid（混合检索）在所有核心指标上全面领先。详见 [`benchmarks/2026-05-22_baseline/`](benchmarks/2026-05-22_baseline/ARCHITECTURE.md)。
-
-## 📚 语料库
-
-| 文档 | Chunk 数 |
-|------|----------|
-| 焦虑心理学 | 269 |
-| 乌合之众：大众心理研究 | 419 |
-| 人人都该懂的心理学 | 520 |
-| **合计** | **1,208** |
-
-## 🔧 技术栈
+## 技术栈
 
 | 层级 | 技术 |
 |------|------|
-| 嵌入模型 | DashScope text-embedding-v3 (1024-dim) |
-| LLM | DeepSeek-V4-Flash |
-| 向量数据库 | Chroma (SQLite) |
-| BM25 | scikit-learn TfidfVectorizer + jieba 分词 |
+| Embedding | DashScope text-embedding-v4 (1024-dim, text_type + instruct) |
+| LLM | DeepSeek-V4-Flash (via DashScope) |
+| 向量数据库 | ChromaDB (SQLite) |
+| BM25 | scikit-learn TfidfVectorizer + jieba |
 | 文档解析 | MuPDF + pytesseract OCR |
-| 测试框架 | pytest |
 
-## 📝 已知问题
-
-- **全局性总结受限**：当前 chunk 级检索无法有效回答"这本书讲了什么"等宏观问题，详见 [`docs/RAG_issue.md`](docs/RAG_issue.md)
-
-## 📄 License
+## License
 
 MIT
