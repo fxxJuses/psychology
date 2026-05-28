@@ -11,6 +11,18 @@
 - **严格生成**: 区分核心/补充文档，禁止编造引用
 - **完整评估**: 6 项检索指标 + 2 项生成质量指标 (LLM-as-Judge)，15 条测试用例
 
+## 当前指标 (2026-05-28, hybrid_reranked)
+
+| 指标 | 数值 | 说明 |
+|------|------|------|
+| Recall@5 | **0.709** | 前 5 条结果覆盖 71% 的相关信息 |
+| MRR | **0.733** | 首个相关结果平均在第 1.4 位 |
+| Hit@1 | **0.733** | 73% 的情况第一条就命中 |
+| Faithfulness | 0.873 | 87% 的回答内容有据可依 |
+| Answer Relevance | **0.953** | 95% 的回答切题 |
+
+> 所有检索指标均为历史最高。完整评估历史见 [benchmarks/README.md](benchmarks/README.md)。
+
 ## 架构
 
 ```
@@ -27,92 +39,43 @@ User Query
     ↓ [is_macro_query? → L1+L2摘要优先 / 否则 ↓]
     ↓ [Vector(top-30) + BM25(top-30) → RRF Fusion]
     ↓ [LLM Rerank → Top-8]
-    ↓ [Context Expansion (optional)]
 Context (core docs + supplementary)
     ↓ [DeepSeek-V4-Flash: strict grounded generation]
 Answer + Sources
 ```
 
-## 当前最优指标 (2026-05-28)
-
-| 指标 | hybrid_reranked | 历史最优 |
-|------|-----------------|---------|
-| Recall@5 | **0.709** | 0.669 |
-| MRR | **0.733** | 0.612 |
-| Hit@1 | **0.733** | 0.533 |
-| Faithfulness | 0.873 | 0.933 |
-| Answer Relevance | **0.953** | 0.933 |
-
-## 目录结构
-
-```
-psychology/
-├── main.py                     # 入口
-├── rag_agent/                  # 核心模块
-│   ├── cli.py                  # 命令行接口
-│   ├── pipeline.py             # RAG 流水线与配置
-│   ├── document.py             # 文档加载与切分 (sentence/recursive)
-│   ├── paragraph_chunker.py    # 段落级切分 (章节检测+链式metadata)
-│   ├── embeddings.py           # DashScope text-embedding-v4
-│   ├── vectorstore.py          # Chroma 向量存储
-│   ├── retriever.py            # 混合检索 + RRF + Rerank + 上下文扩展
-│   ├── generator.py            # LLM 答案生成 (严格grounded)
-│   ├── hierarchy.py            # 三层层级索引
-│   ├── logger.py               # 结构化日志
-│   └── evaluation/             # 评估子系统
-│       ├── test_cases.py       # 15条测试用例 (6类)
-│       ├── metrics.py          # 检索指标计算
-│       ├── generation_eval.py  # 生成质量评估 (LLM-as-Judge)
-│       ├── runner.py           # 评估执行器 (含reranker评估)
-│       └── reporter.py         # 结果格式化与导出
-├── tests/                      # 单元测试
-├── data/
-│   ├── documents/              # 源文档 (PDF)
-│   ├── chunks/                 # 切分产物 + manifest
-│   └── chroma_db/              # Chroma 持久化
-├── docs/                       # 架构文档
-└── benchmarks/                 # 评估基线归档
-```
-
 ## 快速开始
 
-### 环境要求
-
-- Python 3.10+
-- DashScope API Key
-
-### 安装
-
 ```bash
+# 安装
 pip install -r requirements.txt
 export DASHSCOPE_API_KEY="your-api-key"
-```
 
-### 使用
-
-```bash
-# 1. 摄入文档 (默认: 段落切分 1200字)
+# 摄入文档 (默认: 段落切分 1200字)
 python main.py ingest
 
-# 2. 查询 (默认: hybrid + rerank + HyDE)
+# 查询 (默认: hybrid + rerank + HyDE)
 python main.py query "什么是灾难化思维？"
 
-# 3. 交互对话
+# 交互对话
 python main.py chat --show-sources
 
-# 4. 评估
+# 评估
 python main.py evaluate --eval-modes hybrid,hybrid_reranked
 ```
 
-### CLI 默认参数 (最优配置)
+### CLI 参数
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `--mode` | `hybrid` | 混合检索 (Vector + BM25) |
+| `--mode` | `hybrid` | 检索模式: vector / bm25 / hybrid |
 | `--top-k` | `30` | 候选检索数量 |
 | `--rerank-top-k` | `8` | LLM 精选保留数量 |
 | `--chunk-size` | `1200` | 段落目标大小 |
-| `--chunk-strategy` | `paragraph` | 段落级切分 |
+| `--chunk-strategy` | `paragraph` | 切分策略: paragraph / sentence / recursive |
+| `--no-rerank` | — | 禁用 LLM 精排 |
+| `--no-rewrite` | — | 禁用查询改写 |
+| `--no-hyde` | — | 禁用 HyDE 假设文档检索 |
 
 ## 语料库
 
@@ -132,6 +95,71 @@ python main.py evaluate --eval-modes hybrid,hybrid_reranked
 | 向量数据库 | ChromaDB (SQLite) |
 | BM25 | scikit-learn TfidfVectorizer + jieba |
 | 文档解析 | MuPDF + pytesseract OCR |
+
+## RAG 迭代历程
+
+| 版本 | 日期 | 变更 | 核心收益 |
+|------|------|------|---------|
+| v1 基线 | 05-22 | sentence chunk (500字) + v3 embedding | 端到端管线跑通 |
+| v2 层级索引 | 05-23 | L1文档→L2章节→L3段落 三层索引 | MRR +50%, 宏观问题可回答 |
+| v3 扩大检索 | 05-25 | top_k 8→30 | MRR +11%, Hit@8=0.800 |
+| v4 HyDE | 05-27 | 假设文档检索 | MRR=0.612 (+27%) |
+| v5 Sentence Window | 05-27 | 单句嵌入+上下文扩展 | 全面退化, 放弃 |
+| **v6 段落切分+v4** | **05-28** | **段落级切分(1200字)+v4+严格生成** | **Recall@5 +40%, Relevance +50%** |
+| v6.1 Reranker修复 | 05-28 | 评估中reranker生效 (20→8精选) | MRR +34%, 全指标最高 |
+
+> 核心洞察: 整个迭代围绕 **语义完整性 vs 检索精度** 的矛盾。从 500 字 sentence 到 1200 字 paragraph，配合 reranker 过滤噪声，找到了平衡点。
+
+详见 [docs/RAG_issue.md](docs/RAG_issue.md)。
+
+## 项目状态
+
+**RAG 索引侧**: 已达瓶颈，指标稳定在历史最高水平。
+
+**下一阶段**: Agent 层优化，目标 Faithfulness 87% → 95%+，支持商用发布。
+
+| 方向 | 目标 | 优先级 |
+|------|------|--------|
+| 两阶段生成 (Claim Verification) | Faithfulness 95%+ | P0 |
+| 查询分解 (Query Decomposition) | 复杂问题 Relevance 提升 | P1 |
+| 置信度感知 (Confidence-Aware) | 降低误导风险 | P2 |
+
+详见 [docs/AGENT_ROADMAP.md](docs/AGENT_ROADMAP.md)。
+
+## 文档导航
+
+| 文档 | 内容 |
+|------|------|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 系统架构设计，模块职责与数据流 |
+| [docs/RAG_issue.md](docs/RAG_issue.md) | RAG 迭代记录，每轮变更的动机/效果/根因 |
+| [docs/AGENT_ROADMAP.md](docs/AGENT_ROADMAP.md) | Agent 层优化路线图，商用发布检查清单 |
+| [benchmarks/README.md](benchmarks/README.md) | 评估基线归档与对比 |
+
+## 目录结构
+
+```
+psychology/
+├── main.py                     # 入口
+├── rag_agent/                  # 核心模块
+│   ├── cli.py                  # 命令行接口
+│   ├── pipeline.py             # RAG 流水线与配置
+│   ├── document.py             # 文档加载与切分 (sentence/recursive)
+│   ├── paragraph_chunker.py    # 段落级切分 (章节检测+链式metadata)
+│   ├── embeddings.py           # DashScope text-embedding-v4
+│   ├── vectorstore.py          # Chroma 向量存储
+│   ├── retriever.py            # 混合检索 + RRF + Rerank
+│   ├── generator.py            # LLM 答案生成 (严格grounded)
+│   ├── hierarchy.py            # 三层层级索引
+│   ├── logger.py               # 结构化日志
+│   └── evaluation/             # 评估子系统
+├── tests/                      # 单元测试
+├── data/
+│   ├── documents/              # 源文档 (PDF)
+│   ├── chunks/                 # 切分产物 + manifest
+│   └── chroma_db/              # Chroma 持久化
+├── docs/                       # 架构文档
+└── benchmarks/                 # 评估基线归档
+```
 
 ## License
 
