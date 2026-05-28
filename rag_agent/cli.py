@@ -29,6 +29,7 @@ def cmd_ingest(args):
     config = RAGConfig(
         chunk_size=args.chunk_size,
         chunk_overlap=args.chunk_overlap,
+        chunk_strategy=args.chunk_strategy,
         collection_name=args.collection,
     )
     pipeline = RAGPipeline(db_dir=args.db_dir, config=config)
@@ -181,8 +182,13 @@ def main():
     p_ingest = sub.add_parser("ingest", help="导入文档到向量数据库")
     p_ingest.add_argument("--docs-dir", default=DOCS_DIR_DEFAULT, help="文档目录")
     p_ingest.add_argument("--db-dir", default=DB_DIR_DEFAULT, help="向量数据库目录")
-    p_ingest.add_argument("--chunk-size", type=int, default=256)
+    p_ingest.add_argument("--chunk-size", type=int, default=1200,
+                          help="段落目标大小（默认1200字）")
     p_ingest.add_argument("--chunk-overlap", type=int, default=25)
+    p_ingest.add_argument("--chunk-strategy",
+                          choices=["paragraph", "sentence", "recursive"],
+                          default="paragraph",
+                          help="切分策略: paragraph(段落)/sentence(句子)/recursive(递归)")
     p_ingest.add_argument("--collection", default="rag_agent")
     _add_verbose_arg(p_ingest)
 

@@ -7,13 +7,14 @@ from .document import load_documents, chunk_documents, save_chunks_to_json, Chun
 from .embeddings import create_embeddings
 from .vectorstore import create_vectorstore, add_documents, load_vectorstore, get_all_documents
 from .retriever import (
-    retrieve, format_context, RetrievalConfig, BM25Retriever,
+    retrieve, format_context, expand_context, RetrievalConfig, BM25Retriever,
 )
 from .generator import create_llm, generate
 from .hierarchy import (
     build_hierarchy, save_hierarchy, HierarchyIndex,
     flatten_l1_l2_texts, is_macro_query,
 )
+from .paragraph_chunker import paragraph_chunk_documents
 from . import logger
 
 
@@ -23,9 +24,9 @@ DOCS_DIR_DEFAULT = os.path.join(os.path.dirname(os.path.dirname(__file__)), "dat
 
 @dataclass
 class RAGConfig:
-    chunk_size: int = 500
+    chunk_size: int = 1200
     chunk_overlap: int = 80
-    chunk_strategy: str = "sentence"
+    chunk_strategy: str = "paragraph"   # "paragraph" | "sentence" | "recursive"
     top_k: int = 30
     collection_name: str = "rag_agent"
 
@@ -34,6 +35,7 @@ class RAGConfig:
     rerank_top_k: int = 8
     enable_query_rewrite: bool = True
     enable_hyde: bool = True           # HyDE: 生成假设文档后再检索
+    context_window: int = 0            # 前后各扩展 N 段 (默认关闭)
 
 
 class RAGPipeline:
@@ -91,8 +93,8 @@ class RAGPipeline:
         source = docs_dir or DOCS_DIR_DEFAULT
         logger.keyval("文档目录", source)
         logger.keyval("向量库目录", self.db_dir)
+        logger.keyval("Chunk 策略", self.config.chunk_strategy)
         logger.keyval("Chunk 大小", str(self.config.chunk_size))
-        logger.keyval("Chunk 重叠", str(self.config.chunk_overlap))
 
         docs = load_documents(source)
         if not docs:
@@ -102,23 +104,33 @@ class RAGPipeline:
         logger.info(f"共加载 {len(docs)} 个文档")
         print(f"共加载 {len(docs)} 个文档")
 
-        chunk_cfg = ChunkingConfig(
-            chunk_size=self.config.chunk_size,
-            chunk_overlap=self.config.chunk_overlap,
-            strategy=self.config.chunk_strategy,
-        )
-        chunks = chunk_documents(docs, chunk_cfg)
+        # ========== 切分策略选择 ==========
+        if self.config.chunk_strategy == "paragraph":
+            chunks = paragraph_chunk_documents(
+                docs,
+                target_size=self.config.chunk_size,
+                max_size=self.config.chunk_size * 2,
+            )
+            chunk_cfg = ChunkingConfig(
+                chunk_size=self.config.chunk_size,
+                strategy="paragraph",
+            )
+        else:
+            chunk_cfg = ChunkingConfig(
+                chunk_size=self.config.chunk_size,
+                chunk_overlap=self.config.chunk_overlap,
+                strategy=self.config.chunk_strategy,
+            )
+            chunks = chunk_documents(docs, chunk_cfg)
 
-        # 本地化存储父 chunk 结果，方便调优
         save_chunks_to_json(chunks, config=chunk_cfg)
 
         # ========== 层级索引构建 ==========
-        # 按 source 分组 chunks
         chunks_by_source: dict[str, list] = defaultdict(list)
         for i, ch in enumerate(chunks):
             src = ch.metadata.get("source", "unknown")
-            # 注入 chunk_id 到 metadata，方便层级映射
-            ch.metadata["chunk_id"] = i
+            if "chunk_id" not in ch.metadata:
+                ch.metadata["chunk_id"] = i
             chunks_by_source[src].append(ch)
 
         hierarchy = HierarchyIndex()
@@ -128,10 +140,8 @@ class RAGPipeline:
             node = build_hierarchy(src_chunks, summary_llm, src_name)
             hierarchy.documents.append(node)
 
-        # 保存层级索引 JSON
         save_hierarchy(hierarchy)
 
-        # 将 L1/L2 摘要向量化，写入向量库（标记 source="hierarchy"）
         summary_texts = flatten_l1_l2_texts(hierarchy)
         from langchain_core.documents import Document as LangchainDocument
         summary_docs_lc = [
@@ -149,12 +159,10 @@ class RAGPipeline:
         )
         add_documents(vs, chunks)
 
-        # 写入层级摘要到向量库
         if summary_docs_lc:
             add_documents(vs, summary_docs_lc)
             logger.info(f"[Hierarchy] {len(summary_docs_lc)} 条摘要已写入向量库")
 
-        # 删除旧的 BM25 索引，force rebuild on next query
         bm25_path = os.path.join(self.db_dir, "bm25_index.pkl")
         if os.path.exists(bm25_path):
             os.remove(bm25_path)
@@ -180,7 +188,6 @@ class RAGPipeline:
         # ===== 层级检索路由 =====
         if is_macro_query(question):
             logger.info("[Hierarchy] 检测到宏观问题，启用层级检索")
-            # 先检索 L1/L2 摘要（source="hierarchy"），需要额外调用
             try:
                 summary_docs = vs.similarity_search(
                     question, k=6,
@@ -188,15 +195,12 @@ class RAGPipeline:
                 )
                 logger.info(f"[Hierarchy]   摘要检索命中 {len(summary_docs)} 条")
             except Exception:
-                # 如果不支持 filter，回退到无过滤检索
                 all_vs_docs = vs.similarity_search(question, k=12)
                 summary_docs = [d for d in all_vs_docs
                                 if d.metadata.get("source") == "hierarchy"][:6]
                 logger.info(f"[Hierarchy]   摘要检索（无过滤回退）命中 {len(summary_docs)} 条")
 
-            # 补充 L3 段落
             detail_docs = vs.similarity_search(question, k=6)
-            # 去重 + 合并
             seen = set()
             docs = []
             for d in summary_docs + detail_docs:
@@ -223,6 +227,10 @@ class RAGPipeline:
                 config=retrieval_cfg,
             )
         # ===== 层级检索路由结束 =====
+
+        # 上下文扩展：命中段落后拉取前后相邻段落
+        if self.config.context_window > 0:
+            docs = expand_context(docs, vs, window=self.config.context_window)
 
         context = format_context(docs)
         answer = generate(self.llm, question, context)
