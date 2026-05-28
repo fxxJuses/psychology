@@ -15,11 +15,11 @@ def _add_verbose_arg(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_retrieval_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--top-k", type=int, default=8, help="候选检索数量 (默认8)")
+    parser.add_argument("--top-k", type=int, default=30, help="候选检索数量 (默认30)")
     parser.add_argument("--mode", choices=["vector", "bm25", "hybrid"], default="hybrid",
                         help="检索模式: vector(语义) / bm25(关键词) / hybrid(混合)")
     parser.add_argument("--no-rerank", action="store_true", help="禁用 LLM 精排")
-    parser.add_argument("--rerank-top-k", type=int, default=4, help="精排后保留数量 (默认4)")
+    parser.add_argument("--rerank-top-k", type=int, default=8, help="精排后保留数量 (默认8)")
     parser.add_argument("--no-rewrite", action="store_true", help="禁用查询改写")
     parser.add_argument("--no-hyde", action="store_true", help="禁用 HyDE 假设文档检索")
 
@@ -47,6 +47,7 @@ def cmd_query(args):
         enable_rerank=not args.no_rerank,
         rerank_top_k=args.rerank_top_k,
         enable_query_rewrite=not args.no_rewrite,
+        enable_hyde=not args.no_hyde,
     )
     pipeline = RAGPipeline(db_dir=args.db_dir, config=config)
     result = pipeline.query(args.question)
@@ -64,10 +65,12 @@ def cmd_interactive(args):
         enable_rerank=not args.no_rerank,
         rerank_top_k=args.rerank_top_k,
         enable_query_rewrite=not args.no_rewrite,
+        enable_hyde=not args.no_hyde,
     )
     pipeline = RAGPipeline(db_dir=args.db_dir, config=config)
     print("RAG 交互问答 (输入 'exit' 退出)")
-    print(f"检索模式: {args.mode} | Rerank: {not args.no_rerank} | 查询改写: {not args.no_rewrite}")
+    print(f"检索: {args.mode} | Rerank: {not args.no_rerank} | "
+          f"查询改写: {not args.no_rewrite} | HyDE: {not args.no_hyde}")
     print("-" * 50)
     while True:
         try:
