@@ -120,7 +120,7 @@ def cmd_evaluate(args):
     if args.eval_modes:
         modes = [m.strip() for m in args.eval_modes.split(",")]
     else:
-        modes = ["vector", "bm25", "hybrid"]
+        modes = ["vector", "bm25", "hybrid", "hybrid_reranked"]
 
     # 确定 K 值
     if args.k_values:

@@ -190,7 +190,7 @@ def _llm_rerank(
 
     doc_texts = []
     for i, (doc, _) in enumerate(documents):
-        text = doc.page_content[:500].replace("\n", " ")
+        text = doc.page_content[:800].replace("\n", " ")
         doc_texts.append(f"[文档{i + 1}]: {text}")
 
     prompt = "请评估以下文档与用户问题的相关性：\n\n"

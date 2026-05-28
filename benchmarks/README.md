@@ -16,6 +16,7 @@ benchmarks/
 
 | 日期 | 描述 | 关键指标 |
 |------|------|----------|
+| [2026-05-28](./2026-05-28_paragraph_chunking/ARCHITECTURE.md) | 段落级 Chunking + v4 Embedding | hybrid Recall@5=0.669 (+40%), Answer Relevance=0.933 (+50%) ⭐ — Recall 和 Relevance 双新高 |
 | [2026-05-27](./2026-05-27_hyde/README.md) | HyDE (假设文档嵌入) | hybrid MRR=0.612 (+27%), Answer Relevance=0.607 ⭐ — MRR 首次破0.6，排序质量新高 |
 | [2026-05-27](./2026-05-27_sentence_window/README.md) | Sentence Window (Small-to-Big) | hybrid Recall@5=0.361 ⚠️ — 全面退化，单句嵌入不适用于领域知识检索 |
 | [2026-05-25](./2026-05-25_topk30/README.md) | 扩大检索网 (top_k 8→30) | hybrid MRR=0.483 (+11%), Hit@8=0.800 — Recall 持平 |
