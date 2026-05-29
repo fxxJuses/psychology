@@ -4,7 +4,6 @@ from typing import List, Tuple
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from langchain_core.documents import Document
-import jieba
 from langchain_chroma import Chroma
 from langchain_core.vectorstores import VectorStore
 from langchain_core.language_models import BaseChatModel
@@ -41,6 +40,8 @@ class BM25Retriever:
         self._documents: List[Document] = []
 
     def _tokenize(self, text: str) -> List[str]:
+        import jieba
+        jieba.setLogLevel(jieba.logging.INFO + 1)  # suppress "Building prefix dict" spam
         tokens = list(jieba.cut(text))
         tokens = [t.strip() for t in tokens if t.strip()]
         return tokens

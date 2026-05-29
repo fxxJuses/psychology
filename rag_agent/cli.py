@@ -3,7 +3,7 @@ import sys
 
 from dotenv import load_dotenv
 
-from .pipeline import RAGPipeline, RAGConfig, DB_DIR_DEFAULT, DOCS_DIR_DEFAULT
+from .pipeline import RAGPipeline, RAGConfig, AgentRAGPipeline, DB_DIR_DEFAULT, DOCS_DIR_DEFAULT
 from . import logger as log
 from .evaluation import TestSuite, RAGEvaluator, EvalReporter
 
@@ -12,6 +12,17 @@ load_dotenv()
 
 def _add_verbose_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--verbose", "-v", action="store_true", help="显示详细日志")
+
+
+def _add_agent_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--agent", action="store_true", help="使用 LangGraph Agent 多步推理模式")
+
+
+def _make_pipeline(args, config):
+    """根据 --agent 标志创建对应管线。"""
+    if getattr(args, "agent", False):
+        return AgentRAGPipeline(db_dir=args.db_dir, config=config)
+    return RAGPipeline(db_dir=args.db_dir, config=config)
 
 
 def _add_retrieval_args(parser: argparse.ArgumentParser) -> None:
@@ -49,7 +60,11 @@ def cmd_query(args):
         enable_query_rewrite=not args.no_rewrite,
         enable_hyde=not args.no_hyde,
     )
-    pipeline = RAGPipeline(db_dir=args.db_dir, config=config)
+    if getattr(args, "agent", False):
+        print("正在初始化 Agent ...", end=" ", flush=True)
+    pipeline = _make_pipeline(args, config)
+    if getattr(args, "agent", False):
+        print("就绪")
     result = pipeline.query(args.question)
     print(f"问题: {result['question']}")
     print(f"回答: {result['answer']}")
@@ -67,8 +82,9 @@ def cmd_interactive(args):
         enable_query_rewrite=not args.no_rewrite,
         enable_hyde=not args.no_hyde,
     )
-    pipeline = RAGPipeline(db_dir=args.db_dir, config=config)
-    print("RAG 交互问答 (输入 'exit' 退出)")
+    pipeline = _make_pipeline(args, config)
+    mode_label = "Agent" if getattr(args, "agent", False) else "Pipeline"
+    print(f"RAG 交互问答 ({mode_label} 模式, 输入 'exit' 退出)")
     print(f"检索: {args.mode} | Rerank: {not args.no_rerank} | "
           f"查询改写: {not args.no_rewrite} | HyDE: {not args.no_hyde}")
     print("-" * 50)
@@ -117,7 +133,7 @@ def cmd_evaluate(args):
         enable_query_rewrite=not args.no_rewrite,
         enable_hyde=not args.no_hyde if hasattr(args, 'no_hyde') else True,
     )
-    pipeline = RAGPipeline(db_dir=args.db_dir, config=config)
+    pipeline = _make_pipeline(args, config)
 
     # 确定检索模式
     if args.eval_modes:
@@ -201,6 +217,7 @@ def main():
     p_query.add_argument("--db-dir", default=DB_DIR_DEFAULT)
     p_query.add_argument("--collection", default="rag_agent")
     _add_verbose_arg(p_query)
+    _add_agent_arg(p_query)
     _add_retrieval_args(p_query)
 
     # interactive
@@ -209,6 +226,7 @@ def main():
     p_chat.add_argument("--collection", default="rag_agent")
     p_chat.add_argument("--show-sources", action="store_true")
     _add_verbose_arg(p_chat)
+    _add_agent_arg(p_chat)
     _add_retrieval_args(p_chat)
 
     # evaluate
@@ -233,6 +251,7 @@ def main():
                         help="不保存逐用例评估详情")
     p_eval.add_argument("--quiet", "-q", action="store_true", help="静默模式，不显示进度条")
     _add_verbose_arg(p_eval)
+    _add_agent_arg(p_eval)
     _add_retrieval_args(p_eval)
 
     args = parser.parse_args()

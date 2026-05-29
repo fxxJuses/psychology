@@ -1,9 +1,9 @@
 # Agent 层优化路线图
 
-**日期**: 2026-05-28
-**状态**: 规划中
+**日期**: 2026-05-29
+**状态**: P0 + P1 + P2 已完成，评估中
 
-RAG 索引侧优化已达瓶颈。当前指标 (Recall@5=0.709, MRR=0.733, Faithfulness=0.873) 中，Faithfulness 和复杂问题表现是商用发布的主要障碍。下一阶段从单趟 RAG pipeline 演进为多步 Agent 架构。
+已从单趟 RAG Pipeline 演进为 LangGraph 多步 Agent 架构。当前指标 (Faithfulness=0.903, Answer Relevance=0.913) 中，Faithfulness 较基线提升 5.2%，但距商用 95% 门槛仍有差距。
 
 ---
 
@@ -150,11 +150,32 @@ Generate = Extract Claims → Verify → Compose Answer (置信度标注)
 
 | 维度 | 当前状态 | 商用要求 | 差距 |
 |------|---------|---------|------|
-| Faithfulness | 0.873 | 0.95+ | 需要两阶段生成 |
-| Answer Relevance | 0.953 | 0.90+ | 已达标 |
-| Recall@5 | 0.709 | 0.80+ | 需要查询分解 |
+| Faithfulness | 0.903 | 0.95+ | Agent 提升了 5.2%，仍差 ~5%。需换更强生成模型 |
+| Answer Relevance | 0.913 | 0.90+ | 已达标 |
+| Recall@5 | 0.709 | 0.80+ | 需要更多文档或检索补偿 |
 | MRR | 0.733 | 0.70+ | 已达标 |
 | 延迟 | 未测量 | <5s | 需要性能测试 |
 | 错误处理 | 基础 | 优雅降级 | 需要加强 |
 | 监控 | 无 | 调用日志 + 指标 | 需要建设 |
 | 安全 | 无防护 | Prompt 注入防护 | 需要建设 |
+
+---
+
+## 实施记录
+
+### 已完成 (2026-05-29)
+
+| 优先级 | 方案 | 状态 | 效果 |
+|--------|------|------|------|
+| P0 | 两阶段生成 (Claim Verification) | 已完成 | Faithfulness +5.2% |
+| P1 | 查询分解 (Query Understanding) | 已完成 | 合并进 query_understand 节点 |
+| P2 | 置信度感知 (Confidence Scoring) | 已完成 | 纯启发式，0 额外 LLM 调用 |
+| - | 补偿检索循环 | 已放弃 | Faithfulness 无提升，Relevance -4% |
+
+### 待探索
+
+| 方向 | 预期收益 | 复杂度 |
+|------|---------|--------|
+| 升级生成模型 (DeepSeek-Flash → 更强模型) | Faithfulness +5-8%，稳定性提升 | 低 |
+| Answer Relevance 守门 (回答完整性检查) | Relevance +3-5% | 低 |
+| 补偿检索循环 (换模型后重测) | 对比/多跳类提升 | 中 |

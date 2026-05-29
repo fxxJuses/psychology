@@ -18,6 +18,15 @@ from .paragraph_chunker import paragraph_chunk_documents
 from . import logger
 
 
+def _create_agent_pipeline(db_dir, config, agent_config):
+    """延迟导入并构建 AgentRAGPipeline，避免 langgraph 未安装时影响基础功能。"""
+    from .agent import build_agent_graph
+    from .agent_config import AgentConfig
+
+    cfg = agent_config or AgentConfig()
+    return AgentRAGPipeline(db_dir=db_dir, config=config, agent_config=cfg)
+
+
 DB_DIR_DEFAULT = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "chroma_db")
 DOCS_DIR_DEFAULT = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "documents")
 
@@ -243,4 +252,82 @@ class RAGPipeline:
             "answer": answer,
             "sources": list(set(d.metadata.get("source", "unknown") for d in docs)),
             "chunks": docs,
+        }
+
+
+class AgentRAGPipeline:
+    """基于 LangGraph 的多步 Agent RAG 管线。
+
+    包装现有 RAGPipeline 组件，通过 LangGraph StateGraph 编排多步推理。
+    返回格式与 RAGPipeline.query() 兼容。
+    """
+
+    def __init__(
+        self,
+        db_dir: str | None = None,
+        config: RAGConfig | None = None,
+        agent_config=None,
+        lazy: bool = False,
+    ):
+        self.db_dir = db_dir or DB_DIR_DEFAULT
+        self.config = config or RAGConfig()
+        self._agent_config = agent_config
+        self._base = RAGPipeline(db_dir=self.db_dir, config=self.config)
+        self._graph = None
+
+        if not lazy:
+            self._ensure_graph()
+
+    @property
+    def llm(self):
+        return self._base.llm
+
+    def _ensure_graph(self):
+        if self._graph is not None:
+            return
+
+        from .agent import build_agent_graph
+        from .agent_config import AgentConfig
+
+        cfg = self._agent_config or AgentConfig()
+
+        embeddings = self._base._get_embeddings()
+        vs = load_vectorstore(
+            self.db_dir, embeddings, self.config.collection_name,
+        )
+        bm25 = None
+        if self.config.retrieval_mode in ("bm25", "hybrid"):
+            bm25 = self._base._get_bm25(vs)
+
+        self._graph = build_agent_graph(
+            vectorstore=vs,
+            llm=self.llm,
+            bm25=bm25,
+            embeddings=embeddings,
+            rag_config=self.config,
+            agent_config=cfg,
+        )
+
+    def query(self, question: str) -> dict:
+        logger.section(f"Agent 问答: {question}")
+
+        self._ensure_graph()
+        final_state = self._graph.invoke({"question": question})
+
+        docs = final_state.get("documents", [])
+        answer = final_state.get("answer", "")
+        metadata = final_state.get("metadata", {})
+
+        logger.section("问答结果")
+        logger.info(f"  {answer}")
+        if metadata:
+            logger.info(f"  [元数据] 查询类型={metadata.get('query_type')}, "
+                         f"置信度={metadata.get('confidence', 'N/A')}")
+
+        return {
+            "question": question,
+            "answer": answer,
+            "sources": list(set(d.metadata.get("source", "unknown") for d in docs)),
+            "chunks": docs,
+            "metadata": metadata,
         }

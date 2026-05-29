@@ -37,6 +37,11 @@
     │
 2026-05-28  Reranker 评估修复
             MRR=0.733 (+34%), 全指标历史最高
+    │
+    │  问题: Faithfulness 87% 低于商用门槛，对比/多跳问题表现差
+    │
+2026-05-29  LangGraph Agent 架构升级
+            Faithfulness 0.858→0.903 (+5.2%), Answer Relevance 0.938→0.913 (-2.7%)
 ```
 
 ---
